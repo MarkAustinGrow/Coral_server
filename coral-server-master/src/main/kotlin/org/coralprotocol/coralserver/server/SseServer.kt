@@ -78,9 +78,44 @@ fun runSseMcpServerWithPlainConfiguration(port: Int): Unit = runBlocking {
         
         // Install StatusPages for better error handling
         install(StatusPages) {
+            // Handle broken pipe and connection reset errors gracefully
+            exception<java.io.IOException> { call, cause ->
+                when {
+                    cause.message?.contains("Broken pipe") == true -> {
+                        logger.warn { "Client disconnected (Broken pipe): ${call.request.uri}" }
+                        // Don't try to respond as the connection is already closed
+                    }
+                    cause.message?.contains("Connection reset") == true -> {
+                        logger.warn { "Client connection reset: ${call.request.uri}" }
+                        // Don't try to respond as the connection is already closed
+                    }
+                    else -> {
+                        logger.error(cause) { "I/O exception: ${cause.message}" }
+                        try {
+                            call.respond(HttpStatusCode.InternalServerError, "I/O error: ${cause.message}")
+                        } catch (e: Exception) {
+                            logger.warn { "Could not send error response: ${e.message}" }
+                        }
+                    }
+                }
+            }
+            
+            // Handle general exceptions
             exception<Throwable> { call, cause ->
+                // Check if this is a nested broken pipe exception
+                val rootCause = findRootCause(cause)
+                if (rootCause is java.io.IOException && rootCause.message?.contains("Broken pipe") == true) {
+                    logger.warn { "Client disconnected (Broken pipe in nested exception): ${call.request.uri}" }
+                    // Don't try to respond as the connection is already closed
+                    return@exception
+                }
+                
                 logger.error(cause) { "Unhandled exception: ${cause.message}" }
-                call.respond(HttpStatusCode.InternalServerError, "Internal server error: ${cause.message}")
+                try {
+                    call.respond(HttpStatusCode.InternalServerError, "Internal server error: ${cause.message}")
+                } catch (e: Exception) {
+                    logger.warn { "Could not send error response: ${e.message}" }
+                }
             }
             
             status(HttpStatusCode.NotFound) { call, status ->
@@ -105,7 +140,19 @@ fun runSseMcpServerWithPlainConfiguration(port: Int): Unit = runBlocking {
             }
         }
         
-        install(SSE)
+        install(SSE) {
+            // Configure SSE with longer timeouts
+            pingInterval = 15000 // Send a ping every 15 seconds to keep connections alive
+        }
+        
+        // Add utility function to find root cause of exceptions
+        fun findRootCause(throwable: Throwable): Throwable {
+            var rootCause: Throwable = throwable
+            while (rootCause.cause != null && rootCause.cause !== rootCause) {
+                rootCause = rootCause.cause!!
+            }
+            return rootCause
+        }
         
         // Intercept requests to log headers and body
         intercept(ApplicationCallPipeline.Monitoring) {

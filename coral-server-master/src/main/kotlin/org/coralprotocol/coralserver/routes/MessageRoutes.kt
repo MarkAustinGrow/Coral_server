@@ -85,6 +85,15 @@ fun Routing.messageRoutes(servers: ConcurrentMap<String, Server>) {
         }
         logger.debug { "Found transport: ${transport::class.simpleName}" }
 
+        // Check if the transport is still active
+        if (!isTransportActive(transport)) {
+            logger.warn { "Transport for session ID $transportSessionId is no longer active" }
+            // Remove the inactive transport from the servers map
+            servers.remove(transportSessionId)
+            call.respond(HttpStatusCode.Gone, "Transport no longer active")
+            return@post
+        }
+
         // Handle the message
         try {
             logger.debug { "Processing message with transport: ${transport::class.simpleName}" }
@@ -93,9 +102,39 @@ fun Routing.messageRoutes(servers: ConcurrentMap<String, Server>) {
         } catch (e: NoSuchElementException) {
             logger.error(e) { "This error likely comes from an inspector or non-essential client and can probably be ignored. See https://github.com/modelcontextprotocol/kotlin-sdk/issues/7" }
             call.respond(HttpStatusCode.InternalServerError, "Error handling message: ${e.message}")
+        } catch (e: java.io.IOException) {
+            // Handle broken pipe and connection reset errors
+            if (e.message?.contains("Broken pipe") == true || e.message?.contains("Connection reset") == true) {
+                logger.warn { "Client disconnected while processing message: ${e.message}" }
+                // Remove the broken transport from the servers map
+                servers.remove(transportSessionId)
+                // Don't try to respond as the connection is already closed
+            } else {
+                logger.error(e) { "I/O error processing message: ${e.message}" }
+                try {
+                    call.respond(HttpStatusCode.InternalServerError, "I/O error: ${e.message}")
+                } catch (responseError: Exception) {
+                    logger.warn { "Could not send error response: ${responseError.message}" }
+                }
+            }
         } catch (e: Exception) {
-            logger.error(e) { "Unexpected error processing message: ${e.message}" }
-            call.respond(HttpStatusCode.InternalServerError, "Error handling message: ${e.message}")
+            // Check if this is a nested broken pipe exception
+            val rootCause = findRootCause(e)
+            if (rootCause is java.io.IOException && 
+                (rootCause.message?.contains("Broken pipe") == true || 
+                 rootCause.message?.contains("Connection reset") == true)) {
+                logger.warn { "Client disconnected (nested exception): ${rootCause.message}" }
+                // Remove the broken transport from the servers map
+                servers.remove(transportSessionId)
+                // Don't try to respond as the connection is already closed
+            } else {
+                logger.error(e) { "Unexpected error processing message: ${e.message}" }
+                try {
+                    call.respond(HttpStatusCode.InternalServerError, "Error handling message: ${e.message}")
+                } catch (responseError: Exception) {
+                    logger.warn { "Could not send error response: ${responseError.message}" }
+                }
+            }
         }
     }
 
@@ -160,6 +199,15 @@ fun Routing.messageRoutes(servers: ConcurrentMap<String, Server>) {
         }
         logger.debug { "Found DevMode transport: ${transport::class.simpleName}" }
 
+        // Check if the transport is still active
+        if (!isTransportActive(transport)) {
+            logger.warn { "DevMode transport for session ID $transportSessionId is no longer active" }
+            // Remove the inactive transport from the servers map
+            servers.remove(transportSessionId)
+            call.respond(HttpStatusCode.Gone, "Transport no longer active")
+            return@post
+        }
+
         // Handle the message
         try {
             logger.debug { "Processing DevMode message with transport: ${transport::class.simpleName}" }
@@ -168,9 +216,69 @@ fun Routing.messageRoutes(servers: ConcurrentMap<String, Server>) {
         } catch (e: NoSuchElementException) {
             logger.error(e) { "This error likely comes from an inspector or non-essential client and can probably be ignored. See https://github.com/modelcontextprotocol/kotlin-sdk/issues/7" }
             call.respond(HttpStatusCode.InternalServerError, "Error handling message: ${e.message}")
+        } catch (e: java.io.IOException) {
+            // Handle broken pipe and connection reset errors
+            if (e.message?.contains("Broken pipe") == true || e.message?.contains("Connection reset") == true) {
+                logger.warn { "Client disconnected while processing DevMode message: ${e.message}" }
+                // Remove the broken transport from the servers map
+                servers.remove(transportSessionId)
+                // Don't try to respond as the connection is already closed
+            } else {
+                logger.error(e) { "I/O error processing DevMode message: ${e.message}" }
+                try {
+                    call.respond(HttpStatusCode.InternalServerError, "I/O error: ${e.message}")
+                } catch (responseError: Exception) {
+                    logger.warn { "Could not send error response: ${responseError.message}" }
+                }
+            }
         } catch (e: Exception) {
-            logger.error(e) { "Unexpected error processing DevMode message: ${e.message}" }
-            call.respond(HttpStatusCode.InternalServerError, "Error handling message: ${e.message}")
+            // Check if this is a nested broken pipe exception
+            val rootCause = findRootCause(e)
+            if (rootCause is java.io.IOException && 
+                (rootCause.message?.contains("Broken pipe") == true || 
+                 rootCause.message?.contains("Connection reset") == true)) {
+                logger.warn { "Client disconnected (nested exception) while processing DevMode message: ${rootCause.message}" }
+                // Remove the broken transport from the servers map
+                servers.remove(transportSessionId)
+                // Don't try to respond as the connection is already closed
+            } else {
+                logger.error(e) { "Unexpected error processing DevMode message: ${e.message}" }
+                try {
+                    call.respond(HttpStatusCode.InternalServerError, "Error handling message: ${e.message}")
+                } catch (responseError: Exception) {
+                    logger.warn { "Could not send error response: ${responseError.message}" }
+                }
+            }
         }
     }
+    
+    // Add a health check endpoint for the message service
+    get("/message-health") {
+        call.respond(HttpStatusCode.OK, "Message service is running")
+    }
+}
+
+/**
+ * Utility function to check if a transport is still active
+ */
+private fun isTransportActive(transport: SseServerTransport): Boolean {
+    return try {
+        // Try to access a property or method of the transport
+        // If this succeeds, the transport is likely still active
+        val sessionId = transport.sessionId
+        true
+    } catch (e: Exception) {
+        false
+    }
+}
+
+/**
+ * Utility function to find the root cause of an exception
+ */
+private fun findRootCause(throwable: Throwable): Throwable {
+    var rootCause: Throwable = throwable
+    while (rootCause.cause != null && rootCause.cause !== rootCause) {
+        rootCause = rootCause.cause!!
+    }
+    return rootCause
 }

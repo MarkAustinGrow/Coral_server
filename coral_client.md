@@ -49,7 +49,9 @@ The test client supports several command-line options:
 --http              Use HTTP instead of HTTPS
 --app APP_ID        Specify the application ID (default: default-app)
 --key KEY           Specify the privacy key (default: public)
---session SESSION   Specify the session ID (default: test-session)
+--session SESSION   Specify the session ID (default: auto-generated timestamp)
+--agent AGENT_ID    Specify the agent ID (default: test-agent)
+--devmode           Use DevMode endpoints (more forgiving for testing)
 --insecure          Skip SSL certificate verification
 ```
 
@@ -57,12 +59,23 @@ The test client supports several command-line options:
 
 If everything is working correctly, you should see:
 - A successful connection to the server
-- A response from the register_agent tool call
+- The transport session ID extracted from the SSE connection
+- A successful agent registration
 - Event messages from the server
 
 If you encounter any issues, refer to the troubleshooting section at the end of this document.
 
-### 5. Understanding HTTP vs. HTTPS
+### 5. Understanding the Connection Flow
+
+The Coral server requires a specific connection flow:
+
+1. **Establish an SSE connection** to receive events
+2. **Extract the transport session ID** from the SSE connection
+3. **Send tool calls** to the message endpoint with the transport session ID
+
+This flow is handled automatically by the test client, but it's important to understand if you're building your own client.
+
+### 6. Understanding HTTP vs. HTTPS
 
 The Coral server itself runs on HTTP (port 3001), but it's typically accessed through an HTTPS proxy (like Nginx) for external connections. This is why:
 
@@ -87,34 +100,79 @@ The Coral server is an implementation of the Model Context Protocol (MCP) that f
 
 - **External URL**: `https://coral.pushcollective.club` (your Linode server with HTTPS)
 - **Local URL**: `http://localhost:3001` (direct access on the Linode server)
-- **Protocol**: Server-Sent Events (SSE)
+- **Protocol**: Server-Sent Events (SSE) for events, JSON-RPC for tool calls
 - **Default Application ID**: `default-app`
 - **Default Privacy Keys**: `default-key` or `public`
 - **Port**: 3001 (handled by Nginx reverse proxy for external access)
 
-### Connection Endpoint
+### Connection Endpoints
+
+#### SSE Connection Endpoint
 
 The SSE connection endpoint follows this pattern:
 
 For external access (HTTPS):
 ```
-https://coral.pushcollective.club/{applicationId}/{privacyKey}/{sessionId}/sse
+https://coral.pushcollective.club/{applicationId}/{privacyKey}/{sessionId}/sse?agentId={agentId}
 ```
 
 For local access on the Linode server (HTTP):
 ```
-http://localhost:3001/{applicationId}/{privacyKey}/{sessionId}/sse
+http://localhost:3001/{applicationId}/{privacyKey}/{sessionId}/sse?agentId={agentId}
 ```
 
 Example:
 ```
-https://coral.pushcollective.club/default-app/public/session1/sse
+https://coral.pushcollective.club/default-app/public/session1/sse?agentId=my-agent
+```
+
+#### Message Endpoint for Tool Calls
+
+The message endpoint for tool calls follows this pattern:
+
+```
+https://coral.pushcollective.club/{applicationId}/{privacyKey}/{sessionId}/message?sessionId={transportSessionId}
 ```
 
 Where:
 - `applicationId`: The application identifier (use `default-app` for the default application)
 - `privacyKey`: The privacy key for the application (use `public` for public access)
 - `sessionId`: A unique identifier for the session (can be any string, but should be unique)
+- `agentId`: The identifier for your agent (required for SSE connection)
+- `transportSessionId`: The session ID provided by the server in the SSE connection (required for tool calls)
+
+### Connection Flow
+
+The correct flow for connecting to the Coral server is:
+
+1. **Establish an SSE connection** with the `agentId` parameter
+2. **Wait for the transport session ID** in an SSE event with the event type "endpoint"
+3. **Extract the transport session ID** from the event data
+4. **Send tool calls** to the message endpoint with the transport session ID as a query parameter
+
+### JSON-RPC Format for Tool Calls
+
+Tool calls must be sent in JSON-RPC format:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "REQUEST_ID",
+  "method": "tool_call",
+  "params": {
+    "tool": "TOOL_NAME",
+    "args": {
+      // Tool-specific arguments
+    }
+  }
+}
+```
+
+Where:
+- `jsonrpc`: Must be "2.0"
+- `id`: A unique identifier for the request (used to match responses)
+- `method`: Must be "tool_call"
+- `params`: Contains the tool name and arguments
 
 ## Agent Registration
 
@@ -364,12 +422,18 @@ client = sseclient.SSEClient(response)
 def register_agent(name, description):
     # For tool calls, use the base URL without the /sse suffix
     base_url = url.replace("/sse", "")
+    # Use JSON-RPC format for tool calls
+    request_id = str(uuid.uuid4())
     message = {
-        "type": "tool_call",
-        "tool": "register_agent",
-        "args": {
-            "name": name,
-            "description": description
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tool_call",
+        "params": {
+            "tool": "register_agent",
+            "args": {
+                "name": name,
+                "description": description
+            }
         }
     }
     print(f"Sending: {json.dumps(message)}")
@@ -380,12 +444,18 @@ def register_agent(name, description):
 def create_thread(participants, metadata=None):
     # For tool calls, use the base URL without the /sse suffix
     base_url = url.replace("/sse", "")
+    # Use JSON-RPC format for tool calls
+    request_id = str(uuid.uuid4())
     message = {
-        "type": "tool_call",
-        "tool": "create_thread",
-        "args": {
-            "participants": participants,
-            "metadata": metadata or {}
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tool_call",
+        "params": {
+            "tool": "create_thread",
+            "args": {
+                "participants": participants,
+                "metadata": metadata or {}
+            }
         }
     }
     print(f"Sending: {json.dumps(message)}")
@@ -396,13 +466,19 @@ def create_thread(participants, metadata=None):
 def send_message(thread_id, content, mentions=None):
     # For tool calls, use the base URL without the /sse suffix
     base_url = url.replace("/sse", "")
+    # Use JSON-RPC format for tool calls
+    request_id = str(uuid.uuid4())
     message = {
-        "type": "tool_call",
-        "tool": "send_message",
-        "args": {
-            "thread_id": thread_id,
-            "content": content,
-            "mentions": mentions or []
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tool_call",
+        "params": {
+            "tool": "send_message",
+            "args": {
+                "thread_id": thread_id,
+                "content": content,
+                "mentions": mentions or []
+            }
         }
     }
     print(f"Sending: {json.dumps(message)}")
@@ -457,12 +533,18 @@ eventSource.onmessage = (event) => {
 function registerAgent(name, description) {
   // For tool calls, use the base URL without the /sse suffix
   const baseUrl = serverUrl.replace("/sse", "");
+  // Use JSON-RPC format for tool calls
+  const requestId = crypto.randomUUID();
   const message = {
-    type: "tool_call",
-    tool: "register_agent",
-    args: {
-      name: name,
-      description: description
+    jsonrpc: "2.0",
+    id: requestId,
+    method: "tool_call",
+    params: {
+      tool: "register_agent",
+      args: {
+        name: name,
+        description: description
+      }
     }
   };
   
@@ -484,12 +566,18 @@ function registerAgent(name, description) {
 function createThread(participants, metadata = {}) {
   // For tool calls, use the base URL without the /sse suffix
   const baseUrl = serverUrl.replace("/sse", "");
+  // Use JSON-RPC format for tool calls
+  const requestId = crypto.randomUUID();
   const message = {
-    type: "tool_call",
-    tool: "create_thread",
-    args: {
-      participants: participants,
-      metadata: metadata
+    jsonrpc: "2.0",
+    id: requestId,
+    method: "tool_call",
+    params: {
+      tool: "create_thread",
+      args: {
+        participants: participants,
+        metadata: metadata
+      }
     }
   };
   
@@ -511,13 +599,19 @@ function createThread(participants, metadata = {}) {
 function sendMessage(threadId, content, mentions = []) {
   // For tool calls, use the base URL without the /sse suffix
   const baseUrl = serverUrl.replace("/sse", "");
+  // Use JSON-RPC format for tool calls
+  const requestId = crypto.randomUUID();
   const message = {
-    type: "tool_call",
-    tool: "send_message",
-    args: {
-      thread_id: threadId,
-      content: content,
-      mentions: mentions
+    jsonrpc: "2.0",
+    id: requestId,
+    method: "tool_call",
+    params: {
+      tool: "send_message",
+      args: {
+        thread_id: threadId,
+        content: content,
+        mentions: mentions
+      }
     }
   };
   
@@ -540,46 +634,58 @@ function sendMessage(threadId, content, mentions = []) {
 
 ```bash
 # Register an agent
-curl -X POST "https://coral.pushcollective.club/default-app/public/session1" \
+curl -X POST "https://coral.pushcollective.club/default-app/public/session1/message?sessionId=TRANSPORT_SESSION_ID" \
   -H "Content-Type: application/json" \
   -d '{
-    "type": "tool_call",
-    "tool": "register_agent",
-    "args": {
-      "name": "MyAgent",
-      "description": "A helpful assistant agent"
+    "jsonrpc": "2.0",
+    "id": "request-123",
+    "method": "tool_call",
+    "params": {
+      "tool": "register_agent",
+      "args": {
+        "name": "MyAgent",
+        "description": "A helpful assistant agent"
+      }
     }
   }'
 
 # Create a thread
-curl -X POST "https://coral.pushcollective.club/default-app/public/session1" \
+curl -X POST "https://coral.pushcollective.club/default-app/public/session1/message?sessionId=TRANSPORT_SESSION_ID" \
   -H "Content-Type: application/json" \
   -d '{
-    "type": "tool_call",
-    "tool": "create_thread",
-    "args": {
-      "participants": ["agent_123456", "agent_789012"],
-      "metadata": {
-        "topic": "Collaborative task planning"
+    "jsonrpc": "2.0",
+    "id": "request-456",
+    "method": "tool_call",
+    "params": {
+      "tool": "create_thread",
+      "args": {
+        "participants": ["agent_123456", "agent_789012"],
+        "metadata": {
+          "topic": "Collaborative task planning"
+        }
       }
     }
   }'
 
 # Send a message to a thread
-curl -X POST "https://coral.pushcollective.club/default-app/public/session1" \
+curl -X POST "https://coral.pushcollective.club/default-app/public/session1/message?sessionId=TRANSPORT_SESSION_ID" \
   -H "Content-Type: application/json" \
   -d '{
-    "type": "tool_call",
-    "tool": "send_message",
-    "args": {
-      "thread_id": "thread_abcdef",
-      "content": "Hello, I have a question about the task.",
-      "mentions": ["agent_789012"]
+    "jsonrpc": "2.0",
+    "id": "request-789",
+    "method": "tool_call",
+    "params": {
+      "tool": "send_message",
+      "args": {
+        "thread_id": "thread_abcdef",
+        "content": "Hello, I have a question about the task.",
+        "mentions": ["agent_789012"]
+      }
     }
   }'
 
 # Listen for events (requires a tool like curl-eventsource)
-curl-eventsource "https://coral.pushcollective.club/default-app/public/session1/sse"
+curl-eventsource "https://coral.pushcollective.club/default-app/public/session1/sse?agentId=my-agent"
 ```
 
 ## Troubleshooting

@@ -1,217 +1,276 @@
 # Coral Server Troubleshooting Guide
 
-This guide provides detailed troubleshooting steps for common issues with the Coral server deployment on Linode.
+This guide provides solutions for common issues encountered when connecting to the Coral server.
 
-## 404 Error When Registering an Agent
+## Connection Flow Issues
 
-If you're getting a 404 error when trying to register an agent, it means the server endpoint couldn't be found. Here are some steps to diagnose and fix the issue:
+The most common issue when connecting to the Coral server is not following the correct connection flow. The server requires a specific sequence of steps:
 
-### 1. Check Server Status
+1. **Establish an SSE connection** with the `agentId` parameter
+2. **Extract the transport session ID** from the SSE connection
+3. **Send tool calls** to the message endpoint with the transport session ID
 
-First, verify that the Coral server is running:
+### 404 Not Found Errors
 
-```bash
-# SSH into your Linode server
-ssh root@172.237.124.61
+If you're getting 404 errors when trying to send tool calls, check the following:
 
-# Check if the Docker container is running
-docker ps
+#### 1. Incorrect Endpoint
 
-# If it's not running, start it
-docker compose -f docker-compose-debug.yml up -d
+**Problem**: Sending tool calls to the base URL instead of the `/message` endpoint.
+
+**Solution**: Tool calls must be sent to the `/message` endpoint, not the base URL.
+
+```
+# Incorrect
+https://coral.pushcollective.club/default-app/public/session1
+
+# Correct
+https://coral.pushcollective.club/default-app/public/session1/message?sessionId=TRANSPORT_SESSION_ID
 ```
 
-### 2. Check Server Logs
+#### 2. Missing Transport Session ID
 
-Look at the server logs to see if there are any errors:
+**Problem**: Not including the transport session ID in the message endpoint URL.
+
+**Solution**: Extract the transport session ID from the SSE connection and include it as a query parameter in the message endpoint URL.
+
+```javascript
+// Example of extracting the transport session ID from SSE events
+eventSource.addEventListener('endpoint', (event) => {
+  // The event data contains the full message endpoint URL with the transport session ID
+  const messageEndpoint = event.data;
+  const match = messageEndpoint.match(/sessionId=([a-zA-Z0-9-]+)/);
+  if (match) {
+    const transportSessionId = match[1];
+    console.log(`Transport Session ID: ${transportSessionId}`);
+    // Use this ID in subsequent tool calls
+  }
+});
+```
+
+### 400 Bad Request Errors
+
+If you're getting 400 errors when trying to send tool calls, check the following:
+
+#### 1. Incorrect Message Format
+
+**Problem**: Using the wrong format for tool calls.
+
+**Solution**: Tool calls must be sent in JSON-RPC format:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "REQUEST_ID",
+  "method": "tool_call",
+  "params": {
+    "tool": "TOOL_NAME",
+    "args": {
+      // Tool-specific arguments
+    }
+  }
+}
+```
+
+#### 2. Missing Required Fields
+
+**Problem**: Missing required fields in the JSON-RPC request.
+
+**Solution**: Ensure all required fields are included:
+- `jsonrpc`: Must be "2.0"
+- `id`: A unique identifier for the request
+- `method`: Must be "tool_call"
+- `params`: Contains the tool name and arguments
+
+## SSE Connection Issues
+
+### 1. Missing Agent ID
+
+**Problem**: Not including the `agentId` parameter in the SSE connection URL.
+
+**Solution**: Always include the `agentId` parameter in the SSE connection URL:
+
+```
+https://coral.pushcollective.club/default-app/public/session1/sse?agentId=my-agent
+```
+
+### 2. Connection Timeout
+
+**Problem**: The SSE connection times out or disconnects.
+
+**Solution**: Implement reconnection logic with exponential backoff:
+
+```javascript
+function connectSSE() {
+  const eventSource = new EventSource(sseUrl);
+  
+  eventSource.onerror = (error) => {
+    console.error('SSE connection error:', error);
+    eventSource.close();
+    
+    // Reconnect with exponential backoff
+    setTimeout(connectSSE, Math.min(1000 * Math.pow(2, retryCount++), 30000));
+  };
+  
+  return eventSource;
+}
+```
+
+## DevMode vs. Production Mode
+
+The Coral server has two modes: DevMode and Production Mode.
+
+### DevMode
+
+- More forgiving with session creation
+- Creates sessions on-demand if they don't exist
+- Useful for testing and development
+
+To use DevMode, add `/devmode` to the URL path:
+
+```
+https://coral.pushcollective.club/devmode/default-app/public/session1/sse?agentId=my-agent
+```
+
+### Production Mode
+
+- Requires sessions to be pre-created
+- Enforces stricter validation
+- Recommended for production use
+
+## Server-Side Issues
+
+### 1. Server Not Running
+
+**Problem**: The server is not running or not accessible.
+
+**Solution**: Check if the server is running:
+
+```bash
+docker ps | grep coral-server
+```
+
+If it's not running, start it:
+
+```bash
+cd ~/Coral_server
+docker compose up -d
+```
+
+### 2. Server Logs
+
+**Problem**: Need to check server logs for errors.
+
+**Solution**: View the server logs:
 
 ```bash
 docker logs coral_server-coral-server-1
 ```
 
-Look for messages like:
-- "Starting sse server on port 3001"
-- Any error messages related to routing or endpoints
-
-### 3. Test Local Access
-
-Try accessing the server directly on the Linode server to bypass any Nginx configuration issues:
+For more detailed logs, enable trace logging:
 
 ```bash
-# On the Linode server
-curl http://localhost:3001/default-app/public/test-session/sse
+# Edit docker-compose.yml to enable trace logging
+sed -i 's/TRACE_MODE=false/TRACE_MODE=true/' docker-compose.yml
+
+# Restart the server
+docker compose down
+docker compose up -d
 ```
 
-If this works but external access doesn't, it's likely an Nginx configuration issue.
+## Testing with Simple Clients
 
-### 4. Check Nginx Configuration
+Sometimes it's helpful to test the server with simple clients to isolate issues.
 
-Verify that Nginx is properly configured to forward requests to the Coral server:
+### 1. Testing SSE Connection
 
 ```bash
-# Check Nginx configuration
-cat /etc/nginx/sites-enabled/coral-server
-
-# Check Nginx status
-systemctl status nginx
-
-# Check Nginx logs
-tail -f /var/log/nginx/error.log
+curl -N "http://localhost:3001/devmode/default-app/public/test-session/sse?agentId=test-agent"
 ```
 
-The Nginx configuration should include a location block that forwards requests to the Coral server on port 3001.
+### 2. Testing Tool Calls
 
-### 5. Test Different URL Formats
-
-The Coral server might be expecting a different URL format. Try these variations:
+First, establish an SSE connection and extract the transport session ID. Then, use that ID in the tool call:
 
 ```bash
-# Test with different URL formats
-python test_coral_client.py --server coral.pushcollective.club --http
-python test_coral_client.py --server coral.pushcollective.club:3001 --http
-python test_coral_client.py --server 172.237.124.61 --http
-python test_coral_client.py --server 172.237.124.61:3001 --http
+curl -X POST "http://localhost:3001/devmode/default-app/public/test-session/message?sessionId=TRANSPORT_SESSION_ID" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "request-123",
+    "method": "tool_call",
+    "params": {
+      "tool": "register_agent",
+      "args": {
+        "name": "TestAgent",
+        "description": "A test agent"
+      }
+    }
+  }'
 ```
 
-### 6. Check Firewall Settings
+## Common Error Messages
 
-Make sure the necessary ports are open:
+### "Transport not found"
 
-```bash
-# Check firewall status
-sudo ufw status
+**Problem**: The transport session ID is invalid or expired.
 
-# If needed, allow the ports
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw allow 3001/tcp
-```
+**Solution**: Ensure you're using the correct transport session ID from the SSE connection. If the connection was closed and reopened, you'll need to get a new transport session ID.
 
-### 7. Verify DNS Configuration
+### "Session not found"
 
-Make sure the domain name is correctly pointing to your Linode server:
+**Problem**: The session ID doesn't exist on the server.
 
-```bash
-# Check DNS resolution
-nslookup coral.pushcollective.club
-```
+**Solution**: In production mode, ensure the session exists. In DevMode, try using a different session ID or check if the server is configured to create sessions on-demand.
 
-### 8. Test with Direct IP Address
+### "Field 'id' is required for type with serial name 'io.modelcontextprotocol.kotlin.sdk.JSONRPCResponse'"
 
-Try connecting directly to the IP address instead of the domain name:
+**Problem**: Missing the `id` field in the JSON-RPC request.
 
-```bash
-python test_coral_client.py --server 172.237.124.61 --http
-```
+**Solution**: Ensure your JSON-RPC request includes the `id` field:
 
-## Debugging the URL Structure
-
-The Coral server expects URLs in this format:
-```
-http://server:port/{applicationId}/{privacyKey}/{sessionId}/sse
-```
-
-If you're getting 404 errors, it might be because:
-
-1. The applicationId is incorrect (try "default-app")
-2. The privacyKey is incorrect (try "public")
-3. The sessionId format is incorrect (try a simple string like "test-session")
-
-You can modify these parameters in the test client:
-
-```bash
-python test_coral_client.py --server coral.pushcollective.club --app default-app --key public --session test-session
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "request-123",  // This field is required
+  "method": "tool_call",
+  "params": {
+    // ...
+  }
+}
 ```
 
 ## Advanced Debugging
 
-### Enable Verbose Logging in the Test Client
+### 1. Network Inspection
 
-Modify the test_coral_client.py file to enable more verbose logging:
+Use browser developer tools to inspect network traffic:
 
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)
-```
+1. Open the Network tab in Chrome DevTools
+2. Filter for "EventSource" to see SSE connections
+3. Look for XHR/Fetch requests to see tool calls
 
-### Inspect Network Traffic
+### 2. Packet Capture
 
-Use tools like Wireshark or tcpdump to inspect the network traffic:
-
-```bash
-# On the Linode server
-sudo tcpdump -i any port 3001 -vv
-```
-
-### Check for SSL/TLS Issues
-
-If you're using HTTPS, there might be SSL/TLS configuration issues:
+For more detailed network analysis, use tcpdump:
 
 ```bash
-# Test SSL connection
-openssl s_client -connect coral.pushcollective.club:443
+sudo tcpdump -i any -n port 3001 -A
 ```
 
-## Common Solutions
+### 3. Server Configuration
 
-1. **Incorrect Endpoint for Tool Calls**:
-   
-   One of the most common issues is sending tool calls (POST requests) to the wrong endpoint. The SSE endpoint (with "/sse" suffix) should only be used for GET requests to establish the server-sent events connection.
-   
-   ```
-   # CORRECT:
-   # For SSE connection (GET):
-   https://coral.pushcollective.club/default-app/public/session1/sse
-   
-   # For tool calls (POST):
-   https://coral.pushcollective.club/default-app/public/session1
-   ```
-   
-   If you're getting 404 errors when trying to register an agent or perform other tool calls, make sure you're sending POST requests to the base URL without the "/sse" suffix.
+Check the server configuration:
 
-2. **Restart the Coral server**:
-   ```bash
-   docker compose down
-   docker compose -f docker-compose-debug.yml up -d
-   ```
+```bash
+cat ~/Coral_server/docker-compose.yml
+```
 
-2. **Restart Nginx**:
-   ```bash
-   sudo systemctl restart nginx
-   ```
+## Getting Help
 
-3. **Update Nginx configuration**:
-   Create or modify /etc/nginx/sites-available/coral-server:
-   ```nginx
-   server {
-       listen 80;
-       server_name coral.pushcollective.club;
-       
-       location / {
-           proxy_pass http://localhost:3001;
-           proxy_http_version 1.1;
-           proxy_set_header Upgrade $http_upgrade;
-           proxy_set_header Connection 'upgrade';
-           proxy_set_header Host $host;
-           proxy_cache_bypass $http_upgrade;
-       }
-   }
-   ```
-   Then enable it:
-   ```bash
-   sudo ln -s /etc/nginx/sites-available/coral-server /etc/nginx/sites-enabled/
-   sudo systemctl restart nginx
-   ```
+If you're still having issues, please:
 
-4. **Check for conflicting services**:
-   ```bash
-   sudo netstat -tulpn | grep 3001
-   ```
-
-5. **Verify Docker network**:
-   ```bash
-   docker network ls
-   docker network inspect coral_server_default
-   ```
-
-If you continue to experience issues, please provide the specific error messages and logs to help diagnose the problem further.
+1. Collect the server logs: `docker logs coral_server-coral-server-1 > server-logs.txt`
+2. Capture the client-side error messages
+3. Document the steps to reproduce the issue
+4. Contact the server administrator or open an issue on the GitHub repository

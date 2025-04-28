@@ -362,6 +362,8 @@ client = sseclient.SSEClient(response)
 
 # Register an agent
 def register_agent(name, description):
+    # For tool calls, use the base URL without the /sse suffix
+    base_url = url.replace("/sse", "")
     message = {
         "type": "tool_call",
         "tool": "register_agent",
@@ -371,11 +373,13 @@ def register_agent(name, description):
         }
     }
     print(f"Sending: {json.dumps(message)}")
-    response = requests.post(url, json=message)
+    response = requests.post(base_url, json=message, headers={"Content-Type": "application/json"})
     return response.json()
 
 # Create a thread
 def create_thread(participants, metadata=None):
+    # For tool calls, use the base URL without the /sse suffix
+    base_url = url.replace("/sse", "")
     message = {
         "type": "tool_call",
         "tool": "create_thread",
@@ -385,11 +389,13 @@ def create_thread(participants, metadata=None):
         }
     }
     print(f"Sending: {json.dumps(message)}")
-    response = requests.post(url, json=message)
+    response = requests.post(base_url, json=message, headers={"Content-Type": "application/json"})
     return response.json()
 
 # Send a message to a thread
 def send_message(thread_id, content, mentions=None):
+    # For tool calls, use the base URL without the /sse suffix
+    base_url = url.replace("/sse", "")
     message = {
         "type": "tool_call",
         "tool": "send_message",
@@ -400,7 +406,7 @@ def send_message(thread_id, content, mentions=None):
         }
     }
     print(f"Sending: {json.dumps(message)}")
-    response = requests.post(url, json=message)
+    response = requests.post(base_url, json=message, headers={"Content-Type": "application/json"})
     return response.json()
 
 # Listen for events
@@ -449,6 +455,8 @@ eventSource.onmessage = (event) => {
 
 // Register an agent
 function registerAgent(name, description) {
+  // For tool calls, use the base URL without the /sse suffix
+  const baseUrl = serverUrl.replace("/sse", "");
   const message = {
     type: "tool_call",
     tool: "register_agent",
@@ -460,7 +468,7 @@ function registerAgent(name, description) {
   
   console.log("Sending:", message);
   
-  fetch(serverUrl, {
+  fetch(baseUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -474,6 +482,8 @@ function registerAgent(name, description) {
 
 // Create a thread
 function createThread(participants, metadata = {}) {
+  // For tool calls, use the base URL without the /sse suffix
+  const baseUrl = serverUrl.replace("/sse", "");
   const message = {
     type: "tool_call",
     tool: "create_thread",
@@ -485,7 +495,7 @@ function createThread(participants, metadata = {}) {
   
   console.log("Sending:", message);
   
-  fetch(serverUrl, {
+  fetch(baseUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -499,6 +509,8 @@ function createThread(participants, metadata = {}) {
 
 // Send a message to a thread
 function sendMessage(threadId, content, mentions = []) {
+  // For tool calls, use the base URL without the /sse suffix
+  const baseUrl = serverUrl.replace("/sse", "");
   const message = {
     type: "tool_call",
     tool: "send_message",
@@ -511,7 +523,7 @@ function sendMessage(threadId, content, mentions = []) {
   
   console.log("Sending:", message);
   
-  fetch(serverUrl, {
+  fetch(baseUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -528,7 +540,7 @@ function sendMessage(threadId, content, mentions = []) {
 
 ```bash
 # Register an agent
-curl -X POST "https://coral.pushcollective.club/default-app/public/session1/sse" \
+curl -X POST "https://coral.pushcollective.club/default-app/public/session1" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "tool_call",
@@ -540,7 +552,7 @@ curl -X POST "https://coral.pushcollective.club/default-app/public/session1/sse"
   }'
 
 # Create a thread
-curl -X POST "https://coral.pushcollective.club/default-app/public/session1/sse" \
+curl -X POST "https://coral.pushcollective.club/default-app/public/session1" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "tool_call",
@@ -554,7 +566,7 @@ curl -X POST "https://coral.pushcollective.club/default-app/public/session1/sse"
   }'
 
 # Send a message to a thread
-curl -X POST "https://coral.pushcollective.club/default-app/public/session1/sse" \
+curl -X POST "https://coral.pushcollective.club/default-app/public/session1" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "tool_call",

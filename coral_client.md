@@ -2,6 +2,81 @@
 
 This guide provides instructions for connecting AI agents to the Coral server, which implements the Model Context Protocol (MCP) for agent-to-agent communication.
 
+## Quick Start Guide
+
+To quickly test your Coral server deployment on Linode:
+
+### 1. Install required Python packages
+
+```bash
+pip install requests sseclient-py
+```
+
+### 2. Create a test client
+
+Save the following code as `test_coral_client.py`:
+
+```python
+import requests
+import json
+import sseclient
+import time
+
+# Connect to your Coral server
+url = "https://coral.pushcollective.club/default-app/public/test-session/sse"
+headers = {"Accept": "text/event-stream"}
+
+print(f"Connecting to {url}...")
+try:
+    response = requests.get(url, headers=headers, stream=True)
+    client = sseclient.SSEClient(response)
+    
+    print("Connected! Registering agent...")
+    
+    # Register an agent
+    register_message = {
+        "type": "tool_call",
+        "tool": "register_agent",
+        "args": {
+            "name": "TestAgent",
+            "description": "A test agent for verifying server functionality"
+        }
+    }
+    
+    print(f"Sending: {json.dumps(register_message)}")
+    register_url = url.replace("/sse", "")
+    register_response = requests.post(
+        register_url, 
+        headers={"Content-Type": "application/json"},
+        json=register_message
+    )
+    print(f"Response status: {register_response.status_code}")
+    print(f"Response: {register_response.text}")
+    
+    # Listen for events
+    print("Listening for events (press Ctrl+C to stop)...")
+    for event in client.events():
+        print(f"Received: {event.data}")
+        
+except Exception as e:
+    print(f"Error: {e}")
+```
+
+### 3. Run the test client
+
+```bash
+python test_coral_client.py
+```
+
+### 4. Expected output
+
+If everything is working correctly, you should see:
+- A successful connection to the server
+- A response from the register_agent tool call
+- Event messages from the server
+
+If you encounter any issues, refer to the troubleshooting section at the end of this document.
+
 ## Introduction
 
 The Coral server is an implementation of the Model Context Protocol (MCP) that facilitates communication between AI agents through a thread-based messaging system. It enables agents to discover one another, communicate securely, and collaborate effectively.
@@ -18,10 +93,11 @@ The Coral server is an implementation of the Model Context Protocol (MCP) that f
 
 ### Server Information
 
-- **Server URL**: `https://coral.pushcollective.club`
+- **Server URL**: `https://coral.pushcollective.club` (your Linode server)
 - **Protocol**: Server-Sent Events (SSE)
 - **Default Application ID**: `default-app`
 - **Default Privacy Keys**: `default-key` or `public`
+- **Port**: 3001 (handled by Nginx reverse proxy)
 
 ### Connection Endpoint
 
@@ -500,18 +576,28 @@ curl-eventsource "https://coral.pushcollective.club/default-app/public/session1/
 ### Common Issues
 
 1. **Connection Refused**
-   - Ensure the server is running
-   - Check that the port (3001) is open in the firewall
-   - Verify the URL is correct
+   - Ensure the server is running (`docker ps` on the Linode server should show the coral-server container)
+   - Check that ports 80, 443, and 3001 are open in the firewall (`sudo ufw status`)
+   - Verify the URL is correct (https://coral.pushcollective.club)
 
 2. **Authentication Errors**
    - Ensure you're using the correct application ID and privacy key
    - Check that the session ID is valid
+   - For testing, use "default-app" for applicationId and "public" for privacyKey
 
 3. **Message Delivery Issues**
    - Verify that the thread ID is correct
    - Ensure all mentioned agents are participants in the thread
    - Check that the agent is properly registered
+
+4. **SSL/HTTPS Issues**
+   - Ensure your client is properly handling HTTPS connections
+   - If using a self-signed certificate, you may need to disable certificate verification in your client
+   - Check the Nginx configuration on the server (`cat /etc/nginx/sites-enabled/coral-server`)
+
+5. **Debugging Server Issues**
+   - Check the server logs: `docker logs coral_server-coral-server-1`
+   - Restart the server if needed: `docker compose down && docker compose up -d`
 
 ### Debugging Tips
 
@@ -576,7 +662,7 @@ curl-eventsource "https://coral.pushcollective.club/default-app/public/session1/
 
 - [Coral Protocol GitHub Repository](https://github.com/Coral-Protocol/coral-server)
 - [Model Context Protocol Documentation](https://modelcontextprotocol.github.io/)
-- [Server Status Dashboard](https://coral.pushcollective.club/status) (if available)
+- [Your Coral Server Repository](https://github.com/MarkAustinGrow/Coral_server)
 
 ---
 

@@ -38,6 +38,10 @@ echo "=== Adding user to the docker group ==="
 sudo usermod -aG docker $USER
 echo "NOTE: You may need to log out and log back in for the group changes to take effect."
 
+# Create logs directory
+echo "=== Creating logs directory ==="
+mkdir -p logs
+
 # Build and run the Docker container
 echo "=== Building and running the Docker container ==="
 docker-compose up -d --build

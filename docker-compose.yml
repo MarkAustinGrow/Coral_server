@@ -5,3 +5,10 @@ services:
     ports:
       - "3001:3001"
     restart: unless-stopped
+    environment:
+      - DEBUG_MODE=true  # Set to true to enable debug logging
+      - TRACE_MODE=false # Set to true to enable trace logging (most verbose)
+      - PORT=3001        # The port to run the server on
+      - BEHIND_PROXY=true # Set to true if running behind a proxy like Nginx
+    volumes:
+      - ./logs:/app/logs # Mount a volume for logs

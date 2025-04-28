@@ -22,6 +22,10 @@ else
   git pull
 fi
 
+# Create logs directory
+echo "=== Creating logs directory ==="
+mkdir -p logs
+
 # Build and run the Docker container
 echo "=== Building and running the Docker container ==="
 docker compose up -d --build

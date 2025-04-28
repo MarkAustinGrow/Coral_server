@@ -1,0 +1,46 @@
+# Linode Server Setup Commands for Coral Server Deployment
+
+# These commands should be executed on your Linode server (172.237.124.61)
+# You're already logged in as root, so you can proceed with these commands
+
+# 1. Update system packages
+apt update
+apt upgrade -y
+
+# 2. Install Docker dependencies
+apt install -y apt-transport-https ca-certificates curl software-properties-common
+
+# 3. Add Docker's official GPG key
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+# 4. Add Docker repository
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# 5. Install Docker
+apt update
+apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# 6. Verify Docker installation
+docker --version
+docker compose version
+
+# 7. Clone the GitHub repository
+cd ~
+git clone https://github.com/MarkAustinGrow/Coral_server.git
+cd Coral_server
+
+# 8. Make the deployment script executable
+chmod +x deploy-to-linode.sh
+
+# 9. Run the deployment script
+./deploy-to-linode.sh
+
+# 10. Verify the deployment
+docker ps
+docker logs coral-server
+
+# 11. Configure firewall to allow access to port 3001
+ufw allow 3001/tcp
+ufw status
+
+# The Coral server should now be accessible at http://172.237.124.61:3001

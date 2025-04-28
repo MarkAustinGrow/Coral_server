@@ -12,60 +12,45 @@ To quickly test your Coral server deployment on Linode:
 pip install requests sseclient-py
 ```
 
-### 2. Create a test client
+### 2. Download the test client
 
-Save the following code as `test_coral_client.py`:
+We've created a test client script that can connect to your Coral server and verify that it's working correctly.
 
-```python
-import requests
-import json
-import sseclient
-import time
+```bash
+# If you're on the Linode server
+curl -O https://raw.githubusercontent.com/MarkAustinGrow/Coral_server/enhance-logging/test_coral_client.py
 
-# Connect to your Coral server
-url = "https://coral.pushcollective.club/default-app/public/test-session/sse"
-headers = {"Accept": "text/event-stream"}
-
-print(f"Connecting to {url}...")
-try:
-    response = requests.get(url, headers=headers, stream=True)
-    client = sseclient.SSEClient(response)
-    
-    print("Connected! Registering agent...")
-    
-    # Register an agent
-    register_message = {
-        "type": "tool_call",
-        "tool": "register_agent",
-        "args": {
-            "name": "TestAgent",
-            "description": "A test agent for verifying server functionality"
-        }
-    }
-    
-    print(f"Sending: {json.dumps(register_message)}")
-    register_url = url.replace("/sse", "")
-    register_response = requests.post(
-        register_url, 
-        headers={"Content-Type": "application/json"},
-        json=register_message
-    )
-    print(f"Response status: {register_response.status_code}")
-    print(f"Response: {register_response.text}")
-    
-    # Listen for events
-    print("Listening for events (press Ctrl+C to stop)...")
-    for event in client.events():
-        print(f"Received: {event.data}")
-        
-except Exception as e:
-    print(f"Error: {e}")
+# Or if you're on your local machine
+curl -O https://raw.githubusercontent.com/MarkAustinGrow/Coral_server/enhance-logging/test_coral_client.py
 ```
 
 ### 3. Run the test client
 
+#### From your local machine (external access)
+
 ```bash
-python test_coral_client.py
+# Connect to the server using HTTPS
+python test_coral_client.py --server coral.pushcollective.club
+```
+
+#### From the Linode server itself (local access)
+
+```bash
+# Connect to the server using HTTP on localhost
+python test_coral_client.py --server localhost:3001 --http
+```
+
+#### Additional options
+
+The test client supports several command-line options:
+
+```
+--server HOSTNAME   Specify the server hostname (default: coral.pushcollective.club)
+--http              Use HTTP instead of HTTPS
+--app APP_ID        Specify the application ID (default: default-app)
+--key KEY           Specify the privacy key (default: public)
+--session SESSION   Specify the session ID (default: test-session)
+--insecure          Skip SSL certificate verification
 ```
 
 ### 4. Expected output
@@ -76,6 +61,13 @@ If everything is working correctly, you should see:
 - Event messages from the server
 
 If you encounter any issues, refer to the troubleshooting section at the end of this document.
+
+### 5. Understanding HTTP vs. HTTPS
+
+The Coral server itself runs on HTTP (port 3001), but it's typically accessed through an HTTPS proxy (like Nginx) for external connections. This is why:
+
+- When connecting from the Linode server itself, use HTTP with `localhost:3001`
+- When connecting from external machines, use HTTPS with `coral.pushcollective.club`
 
 ## Introduction
 
@@ -93,18 +85,25 @@ The Coral server is an implementation of the Model Context Protocol (MCP) that f
 
 ### Server Information
 
-- **Server URL**: `https://coral.pushcollective.club` (your Linode server)
+- **External URL**: `https://coral.pushcollective.club` (your Linode server with HTTPS)
+- **Local URL**: `http://localhost:3001` (direct access on the Linode server)
 - **Protocol**: Server-Sent Events (SSE)
 - **Default Application ID**: `default-app`
 - **Default Privacy Keys**: `default-key` or `public`
-- **Port**: 3001 (handled by Nginx reverse proxy)
+- **Port**: 3001 (handled by Nginx reverse proxy for external access)
 
 ### Connection Endpoint
 
 The SSE connection endpoint follows this pattern:
 
+For external access (HTTPS):
 ```
 https://coral.pushcollective.club/{applicationId}/{privacyKey}/{sessionId}/sse
+```
+
+For local access on the Linode server (HTTP):
+```
+http://localhost:3001/{applicationId}/{privacyKey}/{sessionId}/sse
 ```
 
 Example:

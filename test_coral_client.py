@@ -3,18 +3,29 @@ import json
 import sseclient
 import time
 import argparse
+import urllib3
 
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Test client for Coral server')
     parser.add_argument('--server', default='coral.pushcollective.club', help='Coral server hostname')
+    parser.add_argument('--http', action='store_true', help='Use HTTP instead of HTTPS')
     parser.add_argument('--app', default='default-app', help='Application ID')
     parser.add_argument('--key', default='public', help='Privacy key')
     parser.add_argument('--session', default='test-session', help='Session ID')
+    parser.add_argument('--insecure', action='store_true', help='Skip SSL certificate verification')
     args = parser.parse_args()
     
+    # Handle insecure SSL if specified
+    if args.insecure:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        print("⚠️ Warning: SSL certificate verification disabled")
+    
+    # Determine protocol (HTTP or HTTPS)
+    protocol = "http" if args.http else "https"
+    
     # Construct the URL
-    base_url = f"https://{args.server}/{args.app}/{args.key}/{args.session}"
+    base_url = f"{protocol}://{args.server}/{args.app}/{args.key}/{args.session}"
     sse_url = f"{base_url}/sse"
     message_url = base_url
     
@@ -24,7 +35,8 @@ def main():
     print(f"Connecting to {sse_url}...")
     try:
         # Establish SSE connection
-        response = requests.get(sse_url, headers=headers, stream=True)
+        verify_ssl = not args.insecure
+        response = requests.get(sse_url, headers=headers, stream=True, verify=verify_ssl)
         
         if response.status_code != 200:
             print(f"Error connecting to server: {response.status_code} {response.reason}")
@@ -49,7 +61,8 @@ def main():
         register_response = requests.post(
             message_url, 
             headers={"Content-Type": "application/json"},
-            json=register_message
+            json=register_message,
+            verify=verify_ssl
         )
         print(f"Response status: {register_response.status_code}")
         
@@ -87,7 +100,8 @@ def main():
                         thread_response = requests.post(
                             message_url, 
                             headers={"Content-Type": "application/json"},
-                            json=create_thread_message
+                            json=create_thread_message,
+                            verify=verify_ssl
                         )
                         
                         try:
@@ -106,4 +120,15 @@ def main():
         print(f"\nError: {e}")
     
 if __name__ == "__main__":
+    print("Coral Server Test Client")
+    print("------------------------")
+    print("This script tests connectivity to a Coral server and verifies")
+    print("that agent registration and thread creation are working.")
+    print("")
+    print("Examples:")
+    print("  - Test external server:   python test_coral_client.py")
+    print("  - Test local server:      python test_coral_client.py --server localhost:3001 --http")
+    print("  - Skip SSL verification:  python test_coral_client.py --insecure")
+    print("")
+    
     main()

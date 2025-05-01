@@ -169,6 +169,10 @@ class CoralAgentGraphSession(
     fun getThreadsForAgent(agentId: String): List<Thread> {
         return threads.values.filter { it.participants.contains(agentId) }
     }
+    
+    fun getAllThreads(): List<Thread> {
+        return threads.values.toList()
+    }
 
     fun addParticipantToThread(threadId: String, participantId: String): Boolean {
         val thread = threads[threadId] ?: return false

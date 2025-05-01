@@ -20,6 +20,7 @@ import org.coralprotocol.coralserver.config.AppConfigLoader
 import org.coralprotocol.coralserver.routes.messageRoutes
 import org.coralprotocol.coralserver.routes.sessionRoutes
 import org.coralprotocol.coralserver.routes.sseRoutes
+import org.coralprotocol.coralserver.routes.webInterfaceRoutes
 import org.slf4j.event.Level
 
 private val logger = KotlinLogging.logger {}
@@ -185,6 +186,7 @@ fun runSseMcpServerWithPlainConfiguration(port: Int): Unit = runBlocking {
             sessionRoutes()
             sseRoutes(mcpServersByTransportId)
             messageRoutes(mcpServersByTransportId)
+            webInterfaceRoutes(mcpServersByTransportId)
             
             // Log all registered routes
             val routes = application.pluginOrNull(Routing)?.let { 

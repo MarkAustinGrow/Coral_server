@@ -10,7 +10,7 @@ app.use(express.static('public'));
 // Proxy API requests to the Coral Server
 app.get('/api/*', async (req, res) => {
   try {
-    const coralServerUrl = 'http://localhost:3001';
+    const coralServerUrl = 'http://host.docker.internal:3001';
     const apiPath = req.path.replace('/api', '');
     const response = await fetch(`${coralServerUrl}${apiPath}`);
     const data = await response.json();

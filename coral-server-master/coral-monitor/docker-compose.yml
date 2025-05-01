@@ -1,0 +1,8 @@
+version: '3'
+services:
+  coral-monitor:
+    build: .
+    ports:
+      - "3002:3002"
+    restart: unless-stopped
+    network_mode: "host"  # Use host network to access the Coral Server on localhost

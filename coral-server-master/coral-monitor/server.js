@@ -13,7 +13,19 @@ app.get('/api/*', async (req, res) => {
     const coralServerUrl = 'http://host.docker.internal:3001';
     const apiPath = req.path.replace('/api', '');
     const response = await fetch(`${coralServerUrl}${apiPath}`);
-    const data = await response.json();
+    
+    // Check if the response is empty
+    const text = await response.text();
+    let data = [];
+    
+    if (text.trim() !== '') {
+      try {
+        data = JSON.parse(text);
+      } catch (parseError) {
+        console.error('Error parsing JSON:', parseError);
+      }
+    }
+    
     res.json(data);
   } catch (error) {
     console.error('Error proxying request:', error);

@@ -1,6 +1,12 @@
 # Default application configuration
 # TODO: Applications are a work in progress. This is safe to ignore for now.
 applications:
+  - id: "exampleApplication"
+    name: "Example Application"
+    description: "Application for LangChain agents"
+    privacyKeys:
+      - "privkey"
+      - "public"
   - id: "default-app"
     name: "Default Application"
     description: "Default application for testing"

@@ -4,12 +4,13 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 import uuid
+import requests
 from datetime import datetime
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO
-from langchain_mcp_adapters.client import MultiServerMCPClient
 import urllib.parse
 
 # Setup logging
@@ -64,142 +65,97 @@ CORAL_SERVER_URL = os.environ.get('CORAL_SERVER_URL', 'http://coral.pushcollecti
 APPLICATION_ID = os.environ.get('APPLICATION_ID', 'exampleApplication')
 PRIVACY_KEY = os.environ.get('PRIVACY_KEY', 'privkey')
 SESSION_ID = os.environ.get('SESSION_ID', 'b842deb1-95e9-419a-8f57-10bd35ce80d4')  # Using Team Yona's session ID
-MONITOR_AGENT_ID = os.environ.get('MONITOR_AGENT_ID', 'monitor_agent')
+POLLING_INTERVAL = int(os.environ.get('POLLING_INTERVAL', '5'))  # Polling interval in seconds
 
-# Coral server connection
-async def connect_to_coral():
-    """Connect to the Coral server and start monitoring."""
-    try:
-        base_url = f"{CORAL_SERVER_URL}/devmode/{APPLICATION_ID}/{PRIVACY_KEY}/{SESSION_ID}/sse"
-        params = {
-            "waitForAgents": 1,
-            "agentId": MONITOR_AGENT_ID,
-            "agentDescription": "Monitoring agent for web interface"
-        }
-        query_string = urllib.parse.urlencode(params)
-        mcp_server_url = f"{base_url}?{query_string}"
-        
-        logger.info(f"Connecting to Coral server at {mcp_server_url}")
-        
-        client = MultiServerMCPClient(
-            connections={
-                "coral": {
-                    "transport": "sse",
-                    "url": mcp_server_url,
-                    "timeout": 300,
-                    "sse_read_timeout": 300,
-                }
-            }
-        )
-        
-        await client.__aenter__()
-        logger.info("Connected to Coral server")
-        
-        # Start monitoring
-        await monitor_communications(client)
-    except Exception as e:
-        logger.error(f"Error connecting to Coral server: {e}")
-        await asyncio.sleep(10)
-        await connect_to_coral()
+# Base URL for API requests
+BASE_API_URL = f"{CORAL_SERVER_URL}/devmode/{APPLICATION_ID}/{PRIVACY_KEY}/{SESSION_ID}"
 
-async def monitor_communications(client):
-    """Monitor communications between agents."""
+def start_monitoring():
+    """Start the monitoring process."""
+    logger.info(f"Starting passive monitoring of Coral server at {CORAL_SERVER_URL}")
+    
     while True:
         try:
-            # Get tools from the client
-            tools = client.get_tools()
+            # Fetch agents
+            fetch_and_update_agents()
             
-            # Find the list_agents tool
-            list_agents_tool = next((t for t in tools if t.name == "list_agents"), None)
-            if list_agents_tool:
-                agents = await list_agents_tool.ainvoke({})
-                update_agents(agents)
-                socketio.emit('agents_update', agents)
+            # Fetch threads
+            fetch_and_update_threads()
             
-            # List threads
-            try:
-                threads = await list_all_threads(client)
-                update_threads(threads)
-                socketio.emit('threads_update', threads)
-            except Exception as e:
-                logger.error(f"Error listing threads: {e}")
+            # Fetch messages
+            fetch_and_update_messages()
             
-            # Find the wait_for_mentions tool
-            wait_for_mentions_tool = next((t for t in tools if t.name == "wait_for_mentions"), None)
-            if wait_for_mentions_tool:
-                mentions = await wait_for_mentions_tool.ainvoke({"timeoutMs": 5000})
-                
-                if mentions:
-                    process_mentions(mentions)
-                    socketio.emit('mentions_update', mentions)
-            
-            await asyncio.sleep(1)
+            # Sleep for the polling interval
+            time.sleep(POLLING_INTERVAL)
         except Exception as e:
-            logger.error(f"Error in monitoring: {e}")
-            await asyncio.sleep(5)
+            logger.error(f"Error in monitoring loop: {e}")
+            time.sleep(POLLING_INTERVAL)
 
-async def list_all_threads(client):
-    """List all threads by creating a temporary thread and checking for existing ones."""
+def fetch_and_update_agents():
+    """Fetch agents from the Coral server and update the database."""
     try:
-        # Get tools from the client
-        tools = client.get_tools()
+        # Make a direct API request to get agents
+        response = requests.get(f"{BASE_API_URL}/agents")
         
-        # Find the create_thread tool
-        create_thread_tool = next((t for t in tools if t.name == "create_thread"), None)
-        if create_thread_tool:
-            temp_thread = await create_thread_tool.ainvoke({
-                "threadName": f"Monitor Thread {uuid.uuid4()}",
-                "participantIds": [MONITOR_AGENT_ID]
-            })
+        if response.status_code == 200:
+            agents_data = response.json()
+            logger.info(f"Fetched agents: {agents_data}")
             
-            # Get thread ID - handle both string and dictionary responses
-            thread_id = None
-            if isinstance(temp_thread, dict):
-                thread_id = temp_thread.get("threadId")
-            elif isinstance(temp_thread, str):
-                try:
-                    # Try to parse as JSON first
-                    thread_data = json.loads(temp_thread)
-                    thread_id = thread_data.get("threadId")
-                except json.JSONDecodeError:
-                    # If not JSON, use the string as is
-                    thread_id = temp_thread
+            # Update the database
+            update_agents(agents_data)
             
-            if not thread_id:
-                logger.warning("Failed to create temporary thread")
-                return []
-            
-            # Try to list threads
-            list_threads_tool = next((t for t in tools if t.name == "list_threads"), None)
-            if list_threads_tool:
-                try:
-                    threads = await list_threads_tool.ainvoke({})
-                    # Handle both string and dictionary responses
-                    if isinstance(threads, str):
-                        try:
-                            threads = json.loads(threads)
-                        except json.JSONDecodeError:
-                            # If not JSON, create a simple thread list
-                            threads = [{"threadId": thread_id, "name": f"Monitor Thread"}]
-                    return threads
-                except Exception as e:
-                    logger.error(f"Error listing threads: {e}")
-                    # Return the temporary thread
-                    return [{"threadId": thread_id, "name": f"Monitor Thread"}]
-            else:
-                return [{"threadId": thread_id, "name": f"Monitor Thread"}]
+            # Emit update to clients
+            socketio.emit('agents_update', agents_data)
         else:
-            logger.warning("Create thread tool not found")
-            return []
+            logger.warning(f"Failed to fetch agents: {response.status_code} - {response.text}")
     except Exception as e:
-        logger.error(f"Error listing threads: {e}")
-        return []
+        logger.error(f"Error fetching agents: {e}")
+
+def fetch_and_update_threads():
+    """Fetch threads from the Coral server and update the database."""
+    try:
+        # Make a direct API request to get threads
+        response = requests.get(f"{BASE_API_URL}/threads")
+        
+        if response.status_code == 200:
+            threads_data = response.json()
+            logger.info(f"Fetched threads: {threads_data}")
+            
+            # Update the database
+            update_threads(threads_data)
+            
+            # Emit update to clients
+            socketio.emit('threads_update', threads_data)
+        else:
+            logger.warning(f"Failed to fetch threads: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.error(f"Error fetching threads: {e}")
+
+def fetch_and_update_messages():
+    """Fetch messages from the Coral server and update the database."""
+    try:
+        # Make a direct API request to get messages
+        response = requests.get(f"{BASE_API_URL}/messages")
+        
+        if response.status_code == 200:
+            messages_data = response.json()
+            logger.info(f"Fetched messages: {messages_data}")
+            
+            # Process and store messages
+            process_messages(messages_data)
+            
+            # Emit update to clients
+            socketio.emit('messages_update', messages_data)
+        else:
+            logger.warning(f"Failed to fetch messages: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.error(f"Error fetching messages: {e}")
 
 def update_agents(agents):
     """Update agent information in the database."""
     try:
         # Log the agents data for debugging
-        logger.info(f"Received agents data: {agents}")
+        logger.info(f"Processing agents data: {agents}")
         
         # Handle different types of agent data
         if isinstance(agents, list):
@@ -257,7 +213,7 @@ def update_threads(threads):
     """Update thread information in the database."""
     try:
         # Log the threads data for debugging
-        logger.info(f"Received threads data: {threads}")
+        logger.info(f"Processing threads data: {threads}")
         
         # Handle different types of thread data
         if isinstance(threads, list):
@@ -311,26 +267,52 @@ def update_threads(threads):
     except Exception as e:
         logger.error(f"Error updating threads: {e}")
 
-def process_mentions(mentions):
-    """Process mentions and store them in the database."""
+def process_messages(messages):
+    """Process messages and store them in the database."""
     try:
-        for mention in mentions:
-            # Extract data from mention
+        # Log the messages data for debugging
+        logger.info(f"Processing messages data: {messages}")
+        
+        # Handle different types of message data
+        if isinstance(messages, list):
+            message_list = messages
+        elif isinstance(messages, dict):
+            message_list = [messages]
+        elif isinstance(messages, str):
+            try:
+                # Try to parse as JSON
+                parsed_data = json.loads(messages)
+                if isinstance(parsed_data, list):
+                    message_list = parsed_data
+                elif isinstance(parsed_data, dict):
+                    message_list = [parsed_data]
+                else:
+                    logger.warning(f"Unexpected JSON format for messages: {parsed_data}")
+                    message_list = []
+            except json.JSONDecodeError:
+                # If it's not JSON, it might be a single message
+                message_list = [{"content": messages}]
+        else:
+            logger.warning(f"Unexpected type for messages: {type(messages)}")
+            message_list = []
+        
+        for message in message_list:
+            # Extract data from message
             thread_id = None
             content = None
             sender_id = None
             receiver_id = None
             
-            if isinstance(mention, dict):
-                thread_id = mention.get("threadId")
-                content = mention.get("content")
-                sender_id = mention.get("senderId")
-                receiver_ids = mention.get("mentions", [])
+            if isinstance(message, dict):
+                thread_id = message.get("threadId")
+                content = message.get("content")
+                sender_id = message.get("senderId")
+                receiver_ids = message.get("mentions", [])
                 receiver_id = receiver_ids[0] if receiver_ids else None
-            elif isinstance(mention, str):
+            elif isinstance(message, str):
                 # Try to parse as JSON
                 try:
-                    data = json.loads(mention)
+                    data = json.loads(message)
                     thread_id = data.get("threadId")
                     content = data.get("content")
                     sender_id = data.get("senderId")
@@ -339,7 +321,7 @@ def process_mentions(mentions):
                 except:
                     # Use default values
                     thread_id = "unknown"
-                    content = mention
+                    content = message
                     sender_id = "unknown"
                     receiver_id = None
             
@@ -390,7 +372,7 @@ def process_mentions(mentions):
                 "timestamp": datetime.now().isoformat()
             })
     except Exception as e:
-        logger.error(f"Error processing mentions: {e}")
+        logger.error(f"Error processing messages: {e}")
 
 # API endpoints
 @app.route('/')
@@ -519,13 +501,35 @@ def get_stats():
         logger.error(f"Error getting stats: {e}")
         return jsonify({})
 
-# Start the Coral connection in a separate thread
-def start_coral_connection():
-    """Start the connection to the Coral server in a separate thread."""
-    asyncio.run(connect_to_coral())
+# Add a direct API check endpoint
+@app.route('/api/check-coral-server', methods=['GET'])
+def check_coral_server():
+    """Check if the Coral server is accessible."""
+    try:
+        # Try to access the agents endpoint
+        response = requests.get(f"{BASE_API_URL}/agents")
+        
+        return jsonify({
+            "status": "success" if response.status_code == 200 else "error",
+            "status_code": response.status_code,
+            "message": "Coral server is accessible" if response.status_code == 200 else f"Error: {response.text}",
+            "url": f"{BASE_API_URL}/agents"
+        })
+    except Exception as e:
+        logger.error(f"Error checking Coral server: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error: {str(e)}",
+            "url": f"{BASE_API_URL}/agents"
+        })
+
+# Start the monitoring in a separate thread
+def start_monitoring_thread():
+    """Start the monitoring in a separate thread."""
+    start_monitoring()
 
 # Start the monitoring thread
-monitoring_thread = threading.Thread(target=start_coral_connection, daemon=True)
+monitoring_thread = threading.Thread(target=start_monitoring_thread, daemon=True)
 monitoring_thread.start()
 
 # Run the Flask app

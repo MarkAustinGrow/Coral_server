@@ -106,10 +106,15 @@ async def monitor_communications(client):
     """Monitor communications between agents."""
     while True:
         try:
-            # List agents
-            agents = await client.connections["coral"].invoke_tool("list_agents", {})
-            update_agents(agents)
-            socketio.emit('agents_update', agents)
+            # Get tools from the client
+            tools = client.get_tools()
+            
+            # Find the list_agents tool
+            list_agents_tool = next((t for t in tools if t.name == "list_agents"), None)
+            if list_agents_tool:
+                agents = await list_agents_tool.ainvoke({})
+                update_agents(agents)
+                socketio.emit('agents_update', agents)
             
             # List threads
             try:
@@ -119,14 +124,14 @@ async def monitor_communications(client):
             except Exception as e:
                 logger.error(f"Error listing threads: {e}")
             
-            # Wait for mentions
-            mentions = await client.connections["coral"].invoke_tool("wait_for_mentions", {
-                "timeoutMs": 5000  # Short timeout for responsiveness
-            })
-            
-            if mentions:
-                process_mentions(mentions)
-                socketio.emit('mentions_update', mentions)
+            # Find the wait_for_mentions tool
+            wait_for_mentions_tool = next((t for t in tools if t.name == "wait_for_mentions"), None)
+            if wait_for_mentions_tool:
+                mentions = await wait_for_mentions_tool.ainvoke({"timeoutMs": 5000})
+                
+                if mentions:
+                    process_mentions(mentions)
+                    socketio.emit('mentions_update', mentions)
             
             await asyncio.sleep(1)
         except Exception as e:
@@ -136,35 +141,46 @@ async def monitor_communications(client):
 async def list_all_threads(client):
     """List all threads by creating a temporary thread and checking for existing ones."""
     try:
-        # Create a temporary thread to get access to thread listing
-        temp_thread = await client.connections["coral"].invoke_tool("create_thread", {
-            "name": f"Monitor Thread {uuid.uuid4()}",
-            "participants": [MONITOR_AGENT_ID]
-        })
+        # Get tools from the client
+        tools = client.get_tools()
         
-        # Get thread ID
-        thread_id = None
-        if isinstance(temp_thread, dict):
-            thread_id = temp_thread.get("threadId")
-        elif isinstance(temp_thread, str):
-            try:
-                thread_data = json.loads(temp_thread)
-                thread_id = thread_data.get("threadId")
-            except:
-                thread_id = temp_thread
-        
-        if not thread_id:
-            logger.warning("Failed to create temporary thread")
+        # Find the create_thread tool
+        create_thread_tool = next((t for t in tools if t.name == "create_thread"), None)
+        if create_thread_tool:
+            temp_thread = await create_thread_tool.ainvoke({
+                "name": f"Monitor Thread {uuid.uuid4()}",
+                "participants": [MONITOR_AGENT_ID]
+            })
+            
+            # Get thread ID
+            thread_id = None
+            if isinstance(temp_thread, dict):
+                thread_id = temp_thread.get("threadId")
+            elif isinstance(temp_thread, str):
+                try:
+                    thread_data = json.loads(temp_thread)
+                    thread_id = thread_data.get("threadId")
+                except:
+                    thread_id = temp_thread
+            
+            if not thread_id:
+                logger.warning("Failed to create temporary thread")
+                return []
+            
+            # Try to list threads
+            list_threads_tool = next((t for t in tools if t.name == "list_threads"), None)
+            if list_threads_tool:
+                try:
+                    threads = await list_threads_tool.ainvoke({})
+                    return threads
+                except:
+                    # If list_threads doesn't exist, return the temporary thread
+                    return [{"threadId": thread_id, "name": f"Monitor Thread"}]
+            else:
+                return [{"threadId": thread_id, "name": f"Monitor Thread"}]
+        else:
+            logger.warning("Create thread tool not found")
             return []
-        
-        # List all threads (this is a hypothetical tool that might not exist)
-        # In a real implementation, you might need to track threads differently
-        try:
-            threads = await client.connections["coral"].invoke_tool("list_threads", {})
-            return threads
-        except:
-            # If list_threads doesn't exist, return the temporary thread
-            return [{"threadId": thread_id, "name": f"Monitor Thread"}]
     except Exception as e:
         logger.error(f"Error listing threads: {e}")
         return []
@@ -242,7 +258,7 @@ def process_mentions(mentions):
                 content = mention.get("content")
                 sender_id = mention.get("senderId")
                 receiver_ids = mention.get("mentions", [])
-                receiver_id = receivers_ids[0] if receivers_ids else None
+                receiver_id = receiver_ids[0] if receiver_ids else None
             elif isinstance(mention, str):
                 # Try to parse as JSON
                 try:

@@ -1,0 +1,16 @@
+[Unit]
+Description=Coral Protocol Monitor
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/Coral_server
+ExecStart=/root/Coral_server/coral_monitor_env/bin/python coral_monitor_service.py
+Restart=always
+RestartSec=10
+Environment=PORT=8080
+Environment=CORAL_SERVER_URL=http://coral.pushcollective.club:5555
+Environment=SESSION_ID=b842deb1-95e9-419a-8f57-10bd35ce80d4
+
+[Install]
+WantedBy=multi-user.target

@@ -63,7 +63,7 @@ conn.commit()
 CORAL_SERVER_URL = os.environ.get('CORAL_SERVER_URL', 'http://coral.pushcollective.club:5555')
 APPLICATION_ID = os.environ.get('APPLICATION_ID', 'exampleApplication')
 PRIVACY_KEY = os.environ.get('PRIVACY_KEY', 'privkey')
-SESSION_ID = os.environ.get('SESSION_ID', 'session1')
+SESSION_ID = os.environ.get('SESSION_ID', 'b842deb1-95e9-419a-8f57-10bd35ce80d4')  # Using Team Yona's session ID
 MONITOR_AGENT_ID = os.environ.get('MONITOR_AGENT_ID', 'monitor_agent')
 
 # Coral server connection
@@ -152,15 +152,17 @@ async def list_all_threads(client):
                 "participants": [MONITOR_AGENT_ID]
             })
             
-            # Get thread ID
+            # Get thread ID - handle both string and dictionary responses
             thread_id = None
             if isinstance(temp_thread, dict):
                 thread_id = temp_thread.get("threadId")
             elif isinstance(temp_thread, str):
                 try:
+                    # Try to parse as JSON first
                     thread_data = json.loads(temp_thread)
                     thread_id = thread_data.get("threadId")
-                except:
+                except json.JSONDecodeError:
+                    # If not JSON, use the string as is
                     thread_id = temp_thread
             
             if not thread_id:
@@ -172,9 +174,17 @@ async def list_all_threads(client):
             if list_threads_tool:
                 try:
                     threads = await list_threads_tool.ainvoke({})
+                    # Handle both string and dictionary responses
+                    if isinstance(threads, str):
+                        try:
+                            threads = json.loads(threads)
+                        except json.JSONDecodeError:
+                            # If not JSON, create a simple thread list
+                            threads = [{"threadId": thread_id, "name": f"Monitor Thread"}]
                     return threads
-                except:
-                    # If list_threads doesn't exist, return the temporary thread
+                except Exception as e:
+                    logger.error(f"Error listing threads: {e}")
+                    # Return the temporary thread
                     return [{"threadId": thread_id, "name": f"Monitor Thread"}]
             else:
                 return [{"threadId": thread_id, "name": f"Monitor Thread"}]
@@ -188,7 +198,33 @@ async def list_all_threads(client):
 def update_agents(agents):
     """Update agent information in the database."""
     try:
-        for agent in agents:
+        # Log the agents data for debugging
+        logger.info(f"Received agents data: {agents}")
+        
+        # Handle different types of agent data
+        if isinstance(agents, list):
+            agent_list = agents
+        elif isinstance(agents, dict):
+            agent_list = [agents]
+        elif isinstance(agents, str):
+            try:
+                # Try to parse as JSON
+                parsed_data = json.loads(agents)
+                if isinstance(parsed_data, list):
+                    agent_list = parsed_data
+                elif isinstance(parsed_data, dict):
+                    agent_list = [parsed_data]
+                else:
+                    logger.warning(f"Unexpected JSON format for agents: {parsed_data}")
+                    agent_list = []
+            except json.JSONDecodeError:
+                # If it's not JSON, it might be a single agent ID
+                agent_list = [{"agentId": agents, "agentDescription": "Unknown agent"}]
+        else:
+            logger.warning(f"Unexpected type for agents: {type(agents)}")
+            agent_list = []
+        
+        for agent in agent_list:
             if isinstance(agent, dict):
                 agent_id = agent.get("agentId")
                 description = agent.get("agentDescription")
@@ -198,13 +234,16 @@ def update_agents(agents):
                     agent_id = agent_data.get("agentId")
                     description = agent_data.get("agentDescription")
                 except:
-                    continue
+                    # If it's not JSON, it might be a single agent ID
+                    agent_id = agent
+                    description = "Unknown agent"
             else:
                 continue
             
             if not agent_id:
                 continue
             
+            logger.info(f"Adding agent to database: {agent_id}, {description}")
             cursor.execute(
                 "INSERT OR REPLACE INTO agents (id, description, status, last_seen) VALUES (?, ?, ?, datetime('now'))",
                 (agent_id, description, "active")
@@ -217,7 +256,33 @@ def update_agents(agents):
 def update_threads(threads):
     """Update thread information in the database."""
     try:
-        for thread in threads:
+        # Log the threads data for debugging
+        logger.info(f"Received threads data: {threads}")
+        
+        # Handle different types of thread data
+        if isinstance(threads, list):
+            thread_list = threads
+        elif isinstance(threads, dict):
+            thread_list = [threads]
+        elif isinstance(threads, str):
+            try:
+                # Try to parse as JSON
+                parsed_data = json.loads(threads)
+                if isinstance(parsed_data, list):
+                    thread_list = parsed_data
+                elif isinstance(parsed_data, dict):
+                    thread_list = [parsed_data]
+                else:
+                    logger.warning(f"Unexpected JSON format for threads: {parsed_data}")
+                    thread_list = []
+            except json.JSONDecodeError:
+                # If it's not JSON, it might be a single thread ID
+                thread_list = [{"threadId": threads, "name": f"Thread {threads}"}]
+        else:
+            logger.warning(f"Unexpected type for threads: {type(threads)}")
+            thread_list = []
+        
+        for thread in thread_list:
             if isinstance(thread, dict):
                 thread_id = thread.get("threadId")
                 name = thread.get("name", f"Thread {thread_id}")
@@ -227,13 +292,16 @@ def update_threads(threads):
                     thread_id = thread_data.get("threadId")
                     name = thread_data.get("name", f"Thread {thread_id}")
                 except:
-                    continue
+                    # If it's not JSON, it might be a single thread ID
+                    thread_id = thread
+                    name = f"Thread {thread_id}"
             else:
                 continue
             
             if not thread_id:
                 continue
             
+            logger.info(f"Adding thread to database: {thread_id}, {name}")
             cursor.execute(
                 "INSERT OR IGNORE INTO threads (id, name, created_at) VALUES (?, ?, datetime('now'))",
                 (thread_id, name)
@@ -463,4 +531,4 @@ monitoring_thread.start()
 # Run the Flask app
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    socketio.run(app, host='0.0.0.0', port=port)
+    socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)

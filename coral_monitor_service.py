@@ -148,8 +148,8 @@ async def list_all_threads(client):
         create_thread_tool = next((t for t in tools if t.name == "create_thread"), None)
         if create_thread_tool:
             temp_thread = await create_thread_tool.ainvoke({
-                "name": f"Monitor Thread {uuid.uuid4()}",
-                "participants": [MONITOR_AGENT_ID]
+                "threadName": f"Monitor Thread {uuid.uuid4()}",
+                "participantIds": [MONITOR_AGENT_ID]
             })
             
             # Get thread ID - handle both string and dictionary responses

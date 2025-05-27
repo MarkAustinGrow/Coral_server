@@ -28,7 +28,7 @@ fun CoralAgentIndividualMcp.addWaitForMentionsTool() {
                     )
                 )
             ),
-            required = listOf("timeoutMs")
+            required = emptyList()
         )
     ) { request: CallToolRequest ->
 
